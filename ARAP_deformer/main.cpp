@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <vector>
+#include <set>
 #include <numeric>
 #include <iostream>
 #include <limits>
@@ -33,6 +34,16 @@ ControlMode current_mode = SELECT_MODE;
 
 vector<float*> colors;
 vector<vector<int> > handles;
+
+std::set<GLuint> *neighbors;
+
+Eigen::Matrix<GLfloat, 3, Eigen::Dynamic> *eij, *epij; // eij, e'ij
+Eigen::Matrix3f *Ri;
+GLfloat *original_vertices;
+GLfloat **w;
+GLuint numvertices, total_rows;
+float **b;
+LeastSquaresSparseSolver solver;
 int selected_handle_id = -1;
 bool deform_mesh_flag = false;
 
@@ -259,17 +270,66 @@ void print_mode() {
 
 // ----------------------------------------------------------------------------------------------------
 // keyboard related functions
-
+void compute_Ri();
+void compute_p_prime();
 void keyboard(unsigned char key, int x, int y )
 {
+	GLuint numcontrol = 0;
+	GLuint idx = numvertices + 1;
 	switch(key)
 	{
 	case 'd':
 		current_mode = DEFORM_MODE;
+		// create solver
+		
+		for (auto handle : handles) {
+			numcontrol += handle.size();
+		}
+		total_rows = numvertices + numcontrol + 1;
+		solver.Create(total_rows, numvertices + 1, 3);
+
+		solver.AddSysElement(0, 0, 1.0f);
+		for (int i = 1; i <= numvertices; ++i) {
+			solver.AddSysElement(i, i, neighbors[i].size()); // assume wij = 1
+			for (auto p : neighbors[i]) {
+				solver.AddSysElement(i, p, -1.0f);
+			}
+		}
+
+		idx = numvertices + 1;
+		for (auto handle : handles) {
+			for (auto p : handle) {
+				solver.AddSysElement(idx++, p, 1.0f);
+			}
+		}
+
+		b = new float*[3];
+		for (int i = 0; i < 3; ++i) {
+			b[i] = new float[total_rows];
+		}
+		solver.SetRightHandSideMatrix(b);
+
+		solver.CholoskyFactorization();
+
+		
 		break;
-	default:
+	
 	case 's':
 		current_mode = SELECT_MODE;
+		solver.ResetSolver(0, 0, 0);
+		for (int i = 0; i < 3; ++i) {
+			delete[] b[i];
+		}
+		delete[] b;
+		break;
+
+	case 'c':
+		for (int i = 0; i < 1; ++i) {
+			compute_Ri();
+			compute_p_prime();
+		}
+		break;
+	default:
 		break;
 	}
 	print_mode();
@@ -284,92 +344,91 @@ void timf(int value)
 	glutTimerFunc(1, timf, 0);
 }
 
-
-
-void main()
-{
-	// solve the linear system
-	// 5x + 2y + 6z = 14
-	// 3x +      9z = 10
-	//      8y + 2z = 12
-	// 2x + 8y      = 13
-
-	LeastSquaresSparseSolver solver;
-
-	solver.Create(4, 3, 1);
-
-	solver.AddSysElement(0, 0, 5.0f);		// first row
-	solver.AddSysElement(0, 1, 2.0f);
-	solver.AddSysElement(0, 2, 6.0f);
-	solver.AddSysElement(1, 0, 3.0f);		// second row
-	solver.AddSysElement(1, 2, 9.0f);
-	solver.AddSysElement(2, 1, 8.0f);		// third row
-	solver.AddSysElement(2, 2, 2.0f);
-	solver.AddSysElement(3, 0, 2.0f);		// fourth row
-	solver.AddSysElement(3, 1, 8.0f);
-
-	float **b = new float*[1];
-	b[0] = new float[4];
-
-	b[0][0] = 14.0f;
-	b[0][1] = 10.0f;
-	b[0][2] = 12.0f;
-	b[0][3] = 13.0f;
-
-	solver.SetRightHandSideMatrix(b);
-
-	// direct solver
-	solver.CholoskyFactorization();
-	solver.CholoskySolve(0);
-
-	//// iterative solver
-	//solver.SetInitialGuess(0 , 0 , 0.0f);
-	//solver.SetInitialGuess(0 , 1 , 0.0f);
-	//solver.SetInitialGuess(0 , 2 , 0.0f);
-	//solver.ConjugateGradientSolve();
-
-	// get result
-	cout << solver.GetSolution(0, 0) << endl;
-	cout << solver.GetSolution(0, 1) << endl;
-	cout << solver.GetSolution(0, 2) << endl;
-
-	// release
-	solver.ResetSolver(0, 0, 0);
-
-	delete[] b[0];
-	delete[] b;
-	int pause;
-	std::cin >> pause;
+void compute_edge(Eigen::Matrix<GLfloat, 3, Eigen::Dynamic> *ei_j, GLfloat *vertices, GLuint numvertices) {
+	for (int i = 1; i <= numvertices; ++i) {
+		int idx = 0;
+		ei_j[i].resize(3, neighbors[i].size());
+		for (auto j : neighbors[i]) {
+			Eigen::Vector3f pi = Eigen::Vector3f(vertices[i * 3 + 0], vertices[i * 3 + 1], vertices[i * 3 + 2]);
+			Eigen::Vector3f pj = Eigen::Vector3f(vertices[j * 3 + 0], vertices[j * 3 + 1], vertices[j * 3 + 2]);
+			ei_j[i].col(idx++) = (pi - pj);
+		}
+	}
 }
 
-int _main(int argc, char *argv[])
+void compute_Ri() {
+	compute_edge(epij, mesh->vertices, numvertices);
+	for (int i = 1; i <= numvertices; ++i) {
+		Eigen::Matrix3f Si = eij[i] * epij[i].transpose(); // assume wij = 1
+		Eigen::JacobiSVD<Eigen::Matrix3f> svd(Si, Eigen::ComputeFullU | Eigen::ComputeFullV);
+		// note that svd.matrixV() is actually V^T!!
+		Ri[i] = (svd.matrixU() * svd.matrixV()).transpose(); // Ri
+
+		Ri[i] = Eigen::Matrix3f::Identity();
+	}
+}
+
+void compute_p_prime() {
+	for (int i = 1; i < numvertices; ++i) {
+		int idx = 0;
+		Eigen::Vector3f bv(0, 0, 0);
+		for (auto p : neighbors[i]) {
+			bv += 0.5 * (Ri[i] + Ri[p]) * eij[i].col(idx++);
+		}
+		for (int j = 0; j < 3; ++j) {
+			b[j][i] = bv[j];
+		}
+	}
+
+	GLuint idx = numvertices + 1;
+	for (auto handle : handles) {
+		for (auto p : handle) {
+			for (int i = 0; i < 3; ++i) {
+				b[i][idx] = mesh->vertices[3 * p + i];
+			}
+		}
+	}
+	solver.CholoskySolve(0);
+	solver.CholoskySolve(1);
+	solver.CholoskySolve(2);
+
+	for (int i = 1; i <= numvertices; ++i) {
+		for (int j = 0; j<3; ++j) {
+			mesh->vertices[3 * i + j] = solver.GetSolution(j, i);
+		}
+	}
+}
+
+
+int main(int argc, char *argv[])
 {
 	// compute SVD decomposition of a matrix m
 	// SVD: m = U * S * V^T
-	Eigen::MatrixXf m = Eigen::MatrixXf::Random(3,2);
+	/*Eigen::MatrixXf m = Eigen::MatrixXf::Random(3,2);
 	cout << "Here is the matrix m:" << endl << m << endl;
 	Eigen::JacobiSVD<Eigen::MatrixXf> svd(m, Eigen::ComputeFullU | Eigen::ComputeFullV);
 	const Eigen::Matrix3f U = svd.matrixU();
 	// note that this is actually V^T!!
 	const Eigen::Matrix3f V = svd.matrixV();
-	const Eigen::VectorXf S = svd.singularValues();
+	const Eigen::VectorXf S = svd.singularValues();*/
+	std::cout << "initializing" << std::endl;
 
 	WindWidth = 800;
 	WindHeight = 800;
 
-	GLfloat light_ambient[] = {0.0, 0.0, 0.0, 1.0};
-	GLfloat light_diffuse[] = {0.8, 0.8, 0.8, 1.0};
-	GLfloat light_specular[] = {1.0, 1.0, 1.0, 1.0};
-	GLfloat light_position[] = {0.0, 0.0, 1.0, 0.0};
+	GLfloat light_ambient[] = { 0.0, 0.0, 0.0, 1.0 };
+	GLfloat light_diffuse[] = { 0.8, 0.8, 0.8, 1.0 };
+	GLfloat light_specular[] = { 1.0, 1.0, 1.0, 1.0 };
+	GLfloat light_position[] = { 0.0, 0.0, 1.0, 0.0 };
 
 	// color list for rendering handles
-	float red[] = {1.0, 0.0, 0.0};
+	float red[] = { 1.0, 0.0, 0.0 };
 	colors.push_back(red);
-	float yellow[] = {1.0, 1.0, 0.0};
+	float yellow[] = { 1.0, 1.0, 0.0 };
 	colors.push_back(yellow);
-	float blue[] = {0.0, 1.0, 1.0};
+	float blue[] = { 0.0, 1.0, 1.0 };
 	colors.push_back(blue);
-	float green[] = {0.0, 1.0, 0.0};
+	float green[] = { 0.0, 1.0, 0.0 };
 	colors.push_back(green);
 
 	glutInit(&argc, argv);
@@ -405,7 +464,41 @@ int _main(int argc, char *argv[])
 
 	glmUnitize(mesh);
 	glmFacetNormals(mesh);
-	glmVertexNormals(mesh , 90.0);
+	glmVertexNormals(mesh, 90.0);
+
+	// pre compute
+	// save a mesh data copy
+	numvertices = mesh->numvertices;
+	original_vertices = new GLfloat[3 * (mesh->numvertices + 1)];
+	for (int i = 0; i <= 3 * numvertices; ++i) {
+		original_vertices[i] = mesh->vertices[i];
+	}
+	eij = new Eigen::Matrix<GLfloat, 3, Eigen::Dynamic>[numvertices + 1];
+	epij = new Eigen::Matrix<GLfloat, 3, Eigen::Dynamic>[numvertices + 1];
+
+	Ri = new Eigen::Matrix3f[numvertices + 1];
+
+	// neighbor
+	{
+		neighbors = new std::set<GLuint>[numvertices + 1];
+		for (int t = 0; t < mesh->numtriangles; ++t) {
+			for (int i = 0; i < 3; ++i) {
+				// p_i: index of pi
+				GLuint p_i = mesh->triangles[t].vindices[i];
+				for (int j = 0; j < 3; ++j) {
+					GLuint p_j = mesh->triangles[t].vindices[j];
+					if (i != j) {
+						neighbors[p_i].insert(p_j);
+					}
+				}
+			}
+		}
+	}
+
+	// eij
+	if (1) {
+		compute_edge(eij, original_vertices, numvertices);
+	}
 
 	print_mode();
 	glutMainLoop();
