@@ -369,6 +369,7 @@ void compute_Ri() {
 }
 
 void compute_p_prime() {
+	b[0][0] = b[1][0] = b[2][0] = 1;
 	for (int i = 1; i < numvertices; ++i) {
 		int idx = 0;
 		Eigen::Vector3f bv(0, 0, 0);
@@ -386,8 +387,12 @@ void compute_p_prime() {
 			for (int i = 0; i < 3; ++i) {
 				b[i][idx] = mesh->vertices[3 * p + i];
 			}
+			idx++;
 		}
 	}
+	std::cout << total_rows << std::endl;
+	std::cout << idx << std::endl;
+	solver.SetRightHandSideMatrix(b);
 	solver.CholoskySolve(0);
 	solver.CholoskySolve(1);
 	solver.CholoskySolve(2);
