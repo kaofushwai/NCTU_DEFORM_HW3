@@ -362,14 +362,23 @@ void compute_Ri() {
 		Eigen::Matrix3f Si = eij[i] * epij[i].transpose(); // assume wij = 1
 		Eigen::JacobiSVD<Eigen::Matrix3f> svd(Si, Eigen::ComputeFullU | Eigen::ComputeFullV);
 		// note that svd.matrixV() is actually V^T!!
-		Ri[i] = (svd.matrixU() * svd.matrixV()).transpose(); // Ri
-
-		Ri[i] = Eigen::Matrix3f::Identity();
+		//Ri[i] = (svd.matrixV() * svd.matrixU().transpose()); // Ri
+		if (true || Ri[i].determinant() < 0) {
+			int min_idx = 0;
+			for (int i = 1; i < 3; ++i) {
+				if (svd.singularValues()[i] < svd.singularValues()[min_idx]) {
+					min_idx = i;
+				}
+			}
+			Eigen::Matrix3f u = svd.matrixU();
+			u.col(min_idx) = -u.col(min_idx);
+			Ri[i] = (svd.matrixV() * u.transpose());
+		}
 	}
 }
 
 void compute_p_prime() {
-	b[0][0] = b[1][0] = b[2][0] = 1;
+	b[0][0] = b[1][0] = b[2][0] = 0;
 	for (int i = 1; i < numvertices; ++i) {
 		int idx = 0;
 		Eigen::Vector3f bv(0, 0, 0);
@@ -465,7 +474,7 @@ int main(int argc, char *argv[])
 	glutTimerFunc(40, timf, 0); // Set up timer for 40ms, about 25 fps
 
 	// load 3D model
-	mesh = glmReadOBJ("../data/man.obj");
+	mesh = glmReadOBJ("../data/Armadillo.obj");
 
 	glmUnitize(mesh);
 	glmFacetNormals(mesh);
