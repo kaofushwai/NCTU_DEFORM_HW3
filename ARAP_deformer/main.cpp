@@ -362,8 +362,8 @@ void compute_Ri() {
 		Eigen::Matrix3f Si = eij[i] * epij[i].transpose(); // assume wij = 1
 		Eigen::JacobiSVD<Eigen::Matrix3f> svd(Si, Eigen::ComputeFullU | Eigen::ComputeFullV);
 		// note that svd.matrixV() is actually V^T!!
-		//Ri[i] = (svd.matrixV() * svd.matrixU().transpose()); // Ri
-		if (true || Ri[i].determinant() < 0) {
+		Ri[i] = (svd.matrixV() * svd.matrixU().transpose()); // Ri
+		if (Ri[i].determinant() < 0) {
 			int min_idx = 0;
 			for (int i = 1; i < 3; ++i) {
 				if (svd.singularValues()[i] < svd.singularValues()[min_idx]) {
@@ -379,7 +379,7 @@ void compute_Ri() {
 
 void compute_p_prime() {
 	b[0][0] = b[1][0] = b[2][0] = 0;
-	for (int i = 1; i < numvertices; ++i) {
+	for (int i = 1; i <= numvertices; ++i) {
 		int idx = 0;
 		Eigen::Vector3f bv(0, 0, 0);
 		for (auto p : neighbors[i]) {
