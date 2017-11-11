@@ -9,6 +9,7 @@
 #include <Windows.h>
 #include <gl/GL.h>
 #include <glut.h>
+#include <thread> 
 
 #include "glm.h"
 #include "mtxlib.h"
@@ -37,9 +38,9 @@ vector<vector<int> > handles;
 
 std::set<GLuint> *neighbors;
 
+bool show_handles = true;
 Eigen::Matrix<GLfloat, 3, Eigen::Dynamic> *eij, *epij; // eij, e'ij
 Eigen::Matrix3f *Ri;
-GLfloat *original_vertices;
 GLfloat **w;
 GLuint numvertices, total_rows;
 float **b;
@@ -89,20 +90,23 @@ void Display(void)
 	glmDraw(mesh , GLM_SMOOTH);
 
 	// render handle points
-	glPointSize(10.0);
-	glEnable(GL_POINT_SMOOTH);
-	glDisable(GL_LIGHTING);
-	glBegin(GL_POINTS);
-	for(int handleIter=0; handleIter<handles.size(); handleIter++)
-	{
-		glColor3fv(colors[ handleIter%colors.size() ]);
-		for(int vertIter=0; vertIter<handles[handleIter].size(); vertIter++)
+	if (show_handles) {
+		glPointSize(10.0);
+		glEnable(GL_POINT_SMOOTH);
+		glDisable(GL_LIGHTING);
+		glBegin(GL_POINTS);
+		for (int handleIter = 0; handleIter<handles.size(); handleIter++)
 		{
-			int idx = handles[handleIter][vertIter];
-			glVertex3fv((float *)&mesh->vertices[3 * idx]);
+			glColor3fv(colors[handleIter%colors.size()]);
+			for (int vertIter = 0; vertIter<handles[handleIter].size(); vertIter++)
+			{
+				int idx = handles[handleIter][vertIter];
+				glVertex3fv((float *)&mesh->vertices[3 * idx]);
+			}
 		}
+		glEnd();
 	}
-	glEnd();
+	
 
 	glPopMatrix();
 
@@ -278,8 +282,12 @@ void keyboard(unsigned char key, int x, int y )
 	GLuint idx = numvertices + 1;
 	switch(key)
 	{
+	case 'h':
+		show_handles = !show_handles; // toggle show handles
+		std::cout << "show handles: " << show_handles << std::endl;
+		break;
 	case 'd':
-		current_mode = DEFORM_MODE;
+		
 		// create solver
 		
 		for (auto handle : handles) {
@@ -311,7 +319,8 @@ void keyboard(unsigned char key, int x, int y )
 
 		solver.CholoskyFactorization();
 
-		
+		current_mode = DEFORM_MODE;
+		print_mode();
 		break;
 	
 	case 's':
@@ -321,18 +330,11 @@ void keyboard(unsigned char key, int x, int y )
 			delete[] b[i];
 		}
 		delete[] b;
-		break;
-
-	case 'c':
-		for (int i = 0; i < 1; ++i) {
-			compute_Ri();
-			compute_p_prime();
-		}
+		print_mode();
 		break;
 	default:
 		break;
 	}
-	print_mode();
 }
 
 // ----------------------------------------------------------------------------------------------------
@@ -341,7 +343,8 @@ void keyboard(unsigned char key, int x, int y )
 void timf(int value)
 {
 	glutPostRedisplay();
-	glutTimerFunc(1, timf, 0);
+	glutTimerFunc(80, timf, 0);
+
 }
 
 void compute_edge(Eigen::Matrix<GLfloat, 3, Eigen::Dynamic> *ei_j, GLfloat *vertices, GLuint numvertices) {
@@ -399,8 +402,6 @@ void compute_p_prime() {
 			idx++;
 		}
 	}
-	std::cout << total_rows << std::endl;
-	std::cout << idx << std::endl;
 	solver.SetRightHandSideMatrix(b);
 	solver.CholoskySolve(0);
 	solver.CholoskySolve(1);
@@ -413,6 +414,21 @@ void compute_p_prime() {
 	}
 }
 
+void iterate_deform() {
+	while (1) {
+		if (current_mode == DEFORM_MODE) {
+			compute_Ri();
+			compute_p_prime();
+		}
+	}
+}
+
+void help() {
+	std::cout << "press s to select new handles" << std::endl;
+	std::cout << "press d to deform" << std::endl;
+	std::cout << "press h to toggle the display of handles" << std::endl;
+
+}
 
 int main(int argc, char *argv[])
 {
@@ -425,6 +441,7 @@ int main(int argc, char *argv[])
 	// note that this is actually V^T!!
 	const Eigen::Matrix3f V = svd.matrixV();
 	const Eigen::VectorXf S = svd.singularValues();*/
+	help();
 	std::cout << "initializing" << std::endl;
 
 	WindWidth = 800;
@@ -474,7 +491,22 @@ int main(int argc, char *argv[])
 	glutTimerFunc(40, timf, 0); // Set up timer for 40ms, about 25 fps
 
 	// load 3D model
-	mesh = glmReadOBJ("../data/Armadillo.obj");
+	switch (4) {
+	case 1:
+		mesh = glmReadOBJ("../data/Armadillo.obj");
+		break;
+	case 2:
+		mesh = glmReadOBJ("../data/Dino.obj");
+		break;
+	case 3:
+		mesh = glmReadOBJ("../data/man.obj");
+		break;
+	case 4:
+		mesh = glmReadOBJ("../data/murphy.obj");
+		break;
+	}
+
+	
 
 	glmUnitize(mesh);
 	glmFacetNormals(mesh);
@@ -483,10 +515,6 @@ int main(int argc, char *argv[])
 	// pre compute
 	// save a mesh data copy
 	numvertices = mesh->numvertices;
-	original_vertices = new GLfloat[3 * (mesh->numvertices + 1)];
-	for (int i = 0; i <= 3 * numvertices; ++i) {
-		original_vertices[i] = mesh->vertices[i];
-	}
 	eij = new Eigen::Matrix<GLfloat, 3, Eigen::Dynamic>[numvertices + 1];
 	epij = new Eigen::Matrix<GLfloat, 3, Eigen::Dynamic>[numvertices + 1];
 
@@ -511,10 +539,11 @@ int main(int argc, char *argv[])
 
 	// eij
 	if (1) {
-		compute_edge(eij, original_vertices, numvertices);
+		compute_edge(eij, mesh->vertices, numvertices);
 	}
 
 	print_mode();
+	std::thread update_thread(iterate_deform);
 	glutMainLoop();
 	
 	return 0;
