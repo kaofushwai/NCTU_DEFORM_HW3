@@ -35,14 +35,18 @@ ControlMode current_mode = SELECT_MODE;
 
 vector<float*> colors;
 vector<vector<int> > handles;
+vector<GLuint> non_constrain_idx, p_to_idx;
 
 std::set<GLuint> *neighbors;
 
 bool show_handles = true;
+bool *is_constrain;
+volatile bool busy = false;
 Eigen::Matrix<GLfloat, 3, Eigen::Dynamic> *eij, *epij; // eij, e'ij
 Eigen::Matrix3f *Ri;
-GLfloat **w;
-GLuint numvertices, total_rows;
+GLfloat **w, *w_sum;
+Eigen::Matrix<GLfloat, Eigen::Dynamic, Eigen::Dynamic> *W;
+GLuint numvertices, total_cond;
 float **b;
 LeastSquaresSparseSolver solver;
 int selected_handle_id = -1;
@@ -181,7 +185,7 @@ void mouse(int button, int state, int x, int y)
 			vector<int> this_handle;
 
 			// project all mesh vertices to current viewport
-			for(int vertIter=0; vertIter<mesh->numvertices; vertIter++)
+			for(int vertIter=1; vertIter<=mesh->numvertices; vertIter++)
 			{
 				vector3 pt(mesh->vertices[3 * vertIter + 0] , mesh->vertices[3 * vertIter + 1] , mesh->vertices[3 * vertIter + 2]);
 				vector2 pos = projection_helper(pt);
@@ -190,6 +194,7 @@ void mouse(int button, int state, int x, int y)
 				if(pos.x>=select_x && pos.y>=select_y && pos.x<=x && pos.y<=y)
 				{
 					this_handle.push_back(vertIter);
+					is_constrain[vertIter] = true;
 				}
 			}
 			handles.push_back(this_handle);
@@ -278,7 +283,7 @@ void compute_Ri();
 void compute_p_prime();
 void keyboard(unsigned char key, int x, int y )
 {
-	GLuint numcontrol = 0;
+	GLuint numcontrol = 0, num_constrain;
 	GLuint idx = numvertices + 1;
 	switch(key)
 	{
@@ -293,30 +298,35 @@ void keyboard(unsigned char key, int x, int y )
 		for (auto handle : handles) {
 			numcontrol += handle.size();
 		}
-		total_rows = numvertices + numcontrol + 1;
-		solver.Create(total_rows, numvertices + 1, 3);
-
-		solver.AddSysElement(0, 0, 1.0f);
-		for (int i = 1; i <= numvertices; ++i) {
-			solver.AddSysElement(i, i, neighbors[i].size()); // assume wij = 1
-			for (auto p : neighbors[i]) {
-				solver.AddSysElement(i, p, -1.0f);
+		num_constrain = 0;
+		non_constrain_idx.clear();
+		for (GLuint i = 1; i <= numvertices; ++i) {
+			if (is_constrain[i]) {
+				num_constrain += 1;
+			} else {
+				p_to_idx[i] = non_constrain_idx.size();
+				non_constrain_idx.push_back(i);
+			}
+		}
+		
+		total_cond = numvertices - num_constrain;
+		std::cout << "conds:" << total_cond << std::endl;
+		solver.Create(total_cond, total_cond, 3);
+		// set system
+		//solver.AddSysElement(0, 0, 1.0f);
+		for (GLuint i = 0; i < non_constrain_idx.size(); ++i) {
+			GLuint curidx = non_constrain_idx[i];
+			solver.AddSysElement(i, i, neighbors[curidx].size());
+			
+			for (auto p : neighbors[curidx]) {
+				if (!is_constrain[p]) {
+					solver.AddSysElement(i, p_to_idx[p], -1);
+				}
 			}
 		}
 
-		idx = numvertices + 1;
-		for (auto handle : handles) {
-			for (auto p : handle) {
-				solver.AddSysElement(idx++, p, 1.0f);
-			}
-		}
-
-		b = new float*[3];
-		for (int i = 0; i < 3; ++i) {
-			b[i] = new float[total_rows];
-		}
-		solver.SetRightHandSideMatrix(b);
-
+		
+		solver.SetRightHandSideMatrix(b); // must set once before factorization or it will crash
 		solver.CholoskyFactorization();
 
 		current_mode = DEFORM_MODE;
@@ -325,12 +335,16 @@ void keyboard(unsigned char key, int x, int y )
 	
 	case 's':
 		current_mode = SELECT_MODE;
-		solver.ResetSolver(0, 0, 0);
-		for (int i = 0; i < 3; ++i) {
-			delete[] b[i];
+		
+		while (busy) {
+			// waiting for another thread complete one iteration
 		}
-		delete[] b;
+		solver.ResetSolver(0, 0, 0);
 		print_mode();
+		break;
+	case 'c':
+		compute_p_prime();
+		compute_Ri();
 		break;
 	default:
 		break;
@@ -347,59 +361,50 @@ void timf(int value)
 
 }
 
-void compute_edge(Eigen::Matrix<GLfloat, 3, Eigen::Dynamic> *ei_j, GLfloat *vertices, GLuint numvertices) {
+void compute_edge(Eigen::Matrix<GLfloat, 3, Eigen::Dynamic> *ei_j, GLuint numvertices) {
 	for (int i = 1; i <= numvertices; ++i) {
 		int idx = 0;
-		ei_j[i].resize(3, neighbors[i].size());
 		for (auto j : neighbors[i]) {
-			Eigen::Vector3f pi = Eigen::Vector3f(vertices[i * 3 + 0], vertices[i * 3 + 1], vertices[i * 3 + 2]);
-			Eigen::Vector3f pj = Eigen::Vector3f(vertices[j * 3 + 0], vertices[j * 3 + 1], vertices[j * 3 + 2]);
+			Eigen::Vector3f pi = Eigen::Vector3f(mesh->vertices[i * 3 + 0], mesh->vertices[i * 3 + 1], mesh->vertices[i * 3 + 2]);
+			Eigen::Vector3f pj = Eigen::Vector3f(mesh->vertices[j * 3 + 0], mesh->vertices[j * 3 + 1], mesh->vertices[j * 3 + 2]);
 			ei_j[i].col(idx++) = (pi - pj);
 		}
 	}
 }
 
 void compute_Ri() {
-	compute_edge(epij, mesh->vertices, numvertices);
+	compute_edge(epij, numvertices);
 	for (int i = 1; i <= numvertices; ++i) {
-		Eigen::Matrix3f Si = eij[i] * epij[i].transpose(); // assume wij = 1
+		Eigen::Matrix3f Si = eij[i] * W[i] * epij[i].transpose(); // assume wij = 1
 		Eigen::JacobiSVD<Eigen::Matrix3f> svd(Si, Eigen::ComputeFullU | Eigen::ComputeFullV);
 		// note that svd.matrixV() is actually V^T!!
 		Ri[i] = (svd.matrixV() * svd.matrixU().transpose()); // Ri
 		if (Ri[i].determinant() < 0) {
-			int min_idx = 0;
-			for (int i = 1; i < 3; ++i) {
-				if (svd.singularValues()[i] < svd.singularValues()[min_idx]) {
-					min_idx = i;
-				}
-			}
 			Eigen::Matrix3f u = svd.matrixU();
-			u.col(min_idx) = -u.col(min_idx);
+			u.col(2) = -u.col(2);
 			Ri[i] = (svd.matrixV() * u.transpose());
 		}
 	}
 }
 
 void compute_p_prime() {
-	b[0][0] = b[1][0] = b[2][0] = 0;
-	for (int i = 1; i <= numvertices; ++i) {
-		int idx = 0;
-		Eigen::Vector3f bv(0, 0, 0);
-		for (auto p : neighbors[i]) {
-			bv += 0.5 * (Ri[i] + Ri[p]) * eij[i].col(idx++);
+	for (int i = 0; i < non_constrain_idx.size(); ++i) {
+		GLuint curidx = non_constrain_idx[i];
+		GLuint nidx = 0;
+		for (GLuint j = 0; j < 3; ++j) {
+			b[j][i] = 0;
 		}
-		for (int j = 0; j < 3; ++j) {
-			b[j][i] = bv[j];
-		}
-	}
-
-	GLuint idx = numvertices + 1;
-	for (auto handle : handles) {
-		for (auto p : handle) {
-			for (int i = 0; i < 3; ++i) {
-				b[i][idx] = mesh->vertices[3 * p + i];
+		for (auto p : neighbors[curidx]) {
+			Eigen::Vector3f bv = 0.5 * (Ri[curidx] + Ri[p]) * eij[curidx].col(nidx++);
+			for (GLuint j = 0; j < 3; ++j) {
+				b[j][i] += bv[j];
 			}
-			idx++;
+
+			if (is_constrain[p]) {
+				for (GLuint j = 0; j < 3; ++j) {
+					b[j][i] += mesh->vertices[3*p+j];
+				}
+			}
 		}
 	}
 	solver.SetRightHandSideMatrix(b);
@@ -407,9 +412,10 @@ void compute_p_prime() {
 	solver.CholoskySolve(1);
 	solver.CholoskySolve(2);
 
-	for (int i = 1; i <= numvertices; ++i) {
-		for (int j = 0; j<3; ++j) {
-			mesh->vertices[3 * i + j] = solver.GetSolution(j, i);
+	for (GLuint i = 0; i < non_constrain_idx.size(); ++i) {
+		GLuint curidx = non_constrain_idx[i];
+		for (GLuint j = 0; j < 3; ++j) {
+			mesh->vertices[3 * curidx + j] = solver.GetSolution(j, i);
 		}
 	}
 }
@@ -417,9 +423,11 @@ void compute_p_prime() {
 void iterate_deform() {
 	while (1) {
 		if (current_mode == DEFORM_MODE) {
-			compute_Ri();
+			busy = true;
 			compute_p_prime();
+			compute_Ri();
 		}
+		busy = false;
 	}
 }
 
@@ -430,19 +438,23 @@ void help() {
 
 }
 
+void compute_cot_weighting(GLfloat *vertices, GLuint a, GLuint b, GLuint c) {
+	Eigen::Vector3f va(vertices[3 * b + 0] - vertices[3 * a + 0], vertices[3 * b + 1] - vertices[3 * a + 1], vertices[3 * b + 2] - vertices[3 * a + 2]);
+	Eigen::Vector3f vb(vertices[3 * c + 0] - vertices[3 * a + 0], vertices[3 * c + 1] - vertices[3 * a + 1], vertices[3 * c + 2] - vertices[3 * a + 2]);
+
+	va.normalize();
+	vb.normalize();
+
+	GLfloat cos = std::fabs(va.dot(vb)); 
+	GLfloat cot = 0.5*(cos / sqrt(1 - cos*cos));
+	cot = 0.5;
+	w[b][c] += cot;
+	w[c][b] += cot;
+}
+
 int main(int argc, char *argv[])
 {
-	// compute SVD decomposition of a matrix m
-	// SVD: m = U * S * V^T
-	/*Eigen::MatrixXf m = Eigen::MatrixXf::Random(3,2);
-	cout << "Here is the matrix m:" << endl << m << endl;
-	Eigen::JacobiSVD<Eigen::MatrixXf> svd(m, Eigen::ComputeFullU | Eigen::ComputeFullV);
-	const Eigen::Matrix3f U = svd.matrixU();
-	// note that this is actually V^T!!
-	const Eigen::Matrix3f V = svd.matrixV();
-	const Eigen::VectorXf S = svd.singularValues();*/
 	help();
-	std::cout << "initializing" << std::endl;
 
 	WindWidth = 800;
 	WindHeight = 800;
@@ -491,7 +503,8 @@ int main(int argc, char *argv[])
 	glutTimerFunc(40, timf, 0); // Set up timer for 40ms, about 25 fps
 
 	// load 3D model
-	switch (4) {
+	std::cout << "loading model" << std::endl;
+	switch (1) {
 	case 1:
 		mesh = glmReadOBJ("../data/Armadillo.obj");
 		break;
@@ -505,45 +518,91 @@ int main(int argc, char *argv[])
 		mesh = glmReadOBJ("../data/murphy.obj");
 		break;
 	}
-
-	
-
 	glmUnitize(mesh);
 	glmFacetNormals(mesh);
 	glmVertexNormals(mesh, 90.0);
+	std::cout << "numvertices: " << mesh->numvertices << std::endl;
 
 	// pre compute
-	// save a mesh data copy
+	std::cout << "initializing" << std::endl;
 	numvertices = mesh->numvertices;
+
+	
+	w = new GLfloat*[numvertices + 1];
+	w_sum = new GLfloat[numvertices + 1]();
+	W = new Eigen::Matrix<GLfloat, Eigen::Dynamic, Eigen::Dynamic>[numvertices + 1];
+	for (GLuint i = 1; i <= numvertices; ++i) {
+		w[i] = new GLfloat[numvertices + 1]();
+		for (GLuint j = 1; j <= numvertices; ++j) {
+			w[i][j] = 0.0;
+		}
+	}
 	eij = new Eigen::Matrix<GLfloat, 3, Eigen::Dynamic>[numvertices + 1];
 	epij = new Eigen::Matrix<GLfloat, 3, Eigen::Dynamic>[numvertices + 1];
 
 	Ri = new Eigen::Matrix3f[numvertices + 1];
+	for (GLuint i = 1; i <= numvertices; ++i) {
+		Ri[i] = Eigen::Matrix3f::Identity();
+	}
+
+	b = new float*[3];
+	for (int i = 0; i < 3; ++i) {
+		b[i] = new float[numvertices + 1];
+	}
+
+	is_constrain = new bool[numvertices + 1]();
+	for (GLuint i = 1; i <= numvertices; ++i) {
+		is_constrain[i] = false;
+	}
 
 	// neighbor
 	{
 		neighbors = new std::set<GLuint>[numvertices + 1];
 		for (int t = 0; t < mesh->numtriangles; ++t) {
+			GLMtriangle &tri = mesh->triangles[t];
+			compute_cot_weighting(mesh->vertices, tri.vindices[0], tri.vindices[1], tri.vindices[2]);
+			compute_cot_weighting(mesh->vertices, tri.vindices[1], tri.vindices[2], tri.vindices[0]);
+			compute_cot_weighting(mesh->vertices, tri.vindices[2], tri.vindices[0], tri.vindices[1]);
+
 			for (int i = 0; i < 3; ++i) {
 				// p_i: index of pi
-				GLuint p_i = mesh->triangles[t].vindices[i];
+				GLuint p_i = tri.vindices[i];
 				for (int j = 0; j < 3; ++j) {
-					GLuint p_j = mesh->triangles[t].vindices[j];
+					GLuint p_j = tri.vindices[j];
 					if (i != j) {
 						neighbors[p_i].insert(p_j);
 					}
 				}
 			}
 		}
+		
+		for (GLuint i = 1; i <= numvertices; ++i) {
+			W[i].resize(neighbors[i].size(), neighbors[i].size());
+			W[i].setZero();
+			
+			GLuint idx = 0;
+			for (auto p : neighbors[i]) {
+				W[i](idx, idx) = w[i][p];
+				w_sum[i] += w[i][p];
+				idx++;
+			}
+		}
+
+		for (GLuint i = 1; i <= numvertices; ++i) {
+			eij[i].resize(3, neighbors[i].size());
+			epij[i].resize(3, neighbors[i].size());
+		}
 	}
 
 	// eij
 	if (1) {
-		compute_edge(eij, mesh->vertices, numvertices);
+		compute_edge(eij, numvertices);
 	}
 
 	print_mode();
-	std::thread update_thread(iterate_deform);
+	//std::thread update_thread(iterate_deform);
+	p_to_idx.resize(numvertices + 1);
+	
 	glutMainLoop();
 	
 	return 0;
