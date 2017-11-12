@@ -316,11 +316,11 @@ void keyboard(unsigned char key, int x, int y )
 		//solver.AddSysElement(0, 0, 1.0f);
 		for (GLuint i = 0; i < non_constrain_idx.size(); ++i) {
 			GLuint curidx = non_constrain_idx[i];
-			solver.AddSysElement(i, i, neighbors[curidx].size());
+			solver.AddSysElement(i, i, w_sum[curidx]);
 			
 			for (auto p : neighbors[curidx]) {
 				if (!is_constrain[p]) {
-					solver.AddSysElement(i, p_to_idx[p], -1);
+					solver.AddSysElement(i, p_to_idx[p], -w[curidx][p]);
 				}
 			}
 		}
@@ -343,8 +343,8 @@ void keyboard(unsigned char key, int x, int y )
 		print_mode();
 		break;
 	case 'c':
-		compute_p_prime();
 		compute_Ri();
+		compute_p_prime();
 		break;
 	default:
 		break;
@@ -379,11 +379,10 @@ void compute_Ri() {
 		Eigen::JacobiSVD<Eigen::Matrix3f> svd(Si, Eigen::ComputeFullU | Eigen::ComputeFullV);
 		// note that svd.matrixV() is actually V^T!!
 		Ri[i] = (svd.matrixV() * svd.matrixU().transpose()); // Ri
-		if (Ri[i].determinant() < 0) {
-			Eigen::Matrix3f u = svd.matrixU();
-			u.col(2) = -u.col(2);
-			Ri[i] = (svd.matrixV() * u.transpose());
-		}
+
+		Eigen::Matrix3f flip = Eigen::Matrix3f::Identity();
+		flip(2, 2) = Ri[i].determinant();
+		Ri[i] = svd.matrixV() * flip * svd.matrixU().transpose();
 	}
 }
 
@@ -395,14 +394,14 @@ void compute_p_prime() {
 			b[j][i] = 0;
 		}
 		for (auto p : neighbors[curidx]) {
-			Eigen::Vector3f bv = 0.5 * (Ri[curidx] + Ri[p]) * eij[curidx].col(nidx++);
+			Eigen::Vector3f bv = 0.5 * w[curidx][p] * (Ri[curidx] + Ri[p]) * eij[curidx].col(nidx++);
 			for (GLuint j = 0; j < 3; ++j) {
 				b[j][i] += bv[j];
 			}
 
 			if (is_constrain[p]) {
 				for (GLuint j = 0; j < 3; ++j) {
-					b[j][i] += mesh->vertices[3*p+j];
+					b[j][i] += mesh->vertices[3*p+j] * w[curidx][p];
 				}
 			}
 		}
@@ -445,9 +444,9 @@ void compute_cot_weighting(GLfloat *vertices, GLuint a, GLuint b, GLuint c) {
 	va.normalize();
 	vb.normalize();
 
-	GLfloat cos = std::fabs(va.dot(vb)); 
-	GLfloat cot = 0.5*(cos / sqrt(1 - cos*cos));
-	cot = 0.5;
+	GLfloat cos = va.dot(vb);
+	GLfloat cot = 0.5*(cos / sqrt(1.0 - cos*cos));
+
 	w[b][c] += cot;
 	w[c][b] += cot;
 }
@@ -504,7 +503,10 @@ int main(int argc, char *argv[])
 
 	// load 3D model
 	std::cout << "loading model" << std::endl;
-	switch (1) {
+	switch (7) {
+	case 0:
+		mesh = glmReadOBJ("../data/Armadillo_o.obj");
+		break;
 	case 1:
 		mesh = glmReadOBJ("../data/Armadillo.obj");
 		break;
@@ -517,8 +519,26 @@ int main(int argc, char *argv[])
 	case 4:
 		mesh = glmReadOBJ("../data/murphy.obj");
 		break;
+	case 5:
+		mesh = glmReadOBJ("../data/square_21_spikes.obj");
+		break;
+	case 6:
+		mesh = glmReadOBJ("../data/cactus_small.obj");
+		break;
+	case 7:
+		mesh = glmReadOBJ("../data/bar1.obj");
+		break;
+	case 8:
+		mesh = glmReadOBJ("../data/bar3.obj");
+		break;
 	}
 	glmUnitize(mesh);
+	for (GLuint i = 1; i <= numvertices; ++i) {
+		for (int j = 0; j < 3; ++j) {
+			mesh->vertices[3 * i + j] *= 20;
+		}
+
+	}
 	glmFacetNormals(mesh);
 	glmVertexNormals(mesh, 90.0);
 	std::cout << "numvertices: " << mesh->numvertices << std::endl;
@@ -600,9 +620,9 @@ int main(int argc, char *argv[])
 	}
 
 	print_mode();
-	//std::thread update_thread(iterate_deform);
-	p_to_idx.resize(numvertices + 1);
 	
+	p_to_idx.resize(numvertices + 1);
+	std::thread update_thread(iterate_deform);
 	glutMainLoop();
 	
 	return 0;
