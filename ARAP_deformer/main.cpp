@@ -434,7 +434,7 @@ void help() {
 	std::cout << "press s to select new handles" << std::endl;
 	std::cout << "press d to deform" << std::endl;
 	std::cout << "press h to toggle the display of handles" << std::endl;
-
+	std::cout << "=========================================" << std::endl;
 }
 
 void compute_cot_weighting(GLfloat *vertices, GLuint a, GLuint b, GLuint c) {
@@ -447,6 +447,10 @@ void compute_cot_weighting(GLfloat *vertices, GLuint a, GLuint b, GLuint c) {
 	GLfloat cos = va.dot(vb);
 	GLfloat cot = 0.5*(cos / sqrt(1.0 - cos*cos));
 
+	bool uniform_weighting = true;
+	if (uniform_weighting) {
+		cot = 0.5;
+	}
 	w[b][c] += cot;
 	w[c][b] += cot;
 }
@@ -526,9 +530,12 @@ int main(int argc, char *argv[])
 		mesh = glmReadOBJ("../data/cactus_small.obj");
 		break;
 	case 7:
-		mesh = glmReadOBJ("../data/bar1.obj");
+		mesh = glmReadOBJ("../data/cactus_highres.obj");
 		break;
 	case 8:
+		mesh = glmReadOBJ("../data/bar1.obj");
+		break;
+	case 9:
 		mesh = glmReadOBJ("../data/bar3.obj");
 		break;
 	}
@@ -546,8 +553,6 @@ int main(int argc, char *argv[])
 	// pre compute
 	std::cout << "initializing" << std::endl;
 	numvertices = mesh->numvertices;
-
-	
 	w = new GLfloat*[numvertices + 1];
 	w_sum = new GLfloat[numvertices + 1]();
 	W = new Eigen::Matrix<GLfloat, Eigen::Dynamic, Eigen::Dynamic>[numvertices + 1];
@@ -574,7 +579,7 @@ int main(int argc, char *argv[])
 	for (GLuint i = 1; i <= numvertices; ++i) {
 		is_constrain[i] = false;
 	}
-
+	p_to_idx.resize(numvertices + 1);
 	// neighbor
 	{
 		neighbors = new std::set<GLuint>[numvertices + 1];
@@ -596,6 +601,8 @@ int main(int argc, char *argv[])
 			}
 		}
 		
+		float minw = 1e9;
+		float maxw = 1e-9;
 		for (GLuint i = 1; i <= numvertices; ++i) {
 			W[i].resize(neighbors[i].size(), neighbors[i].size());
 			W[i].setZero();
@@ -603,10 +610,19 @@ int main(int argc, char *argv[])
 			GLuint idx = 0;
 			for (auto p : neighbors[i]) {
 				W[i](idx, idx) = w[i][p];
+				if (w[i][p] < minw){
+					minw = w[i][p];
+				}
+				if (w[i][p] > maxw) {
+					maxw = w[i][p];
+				}
 				w_sum[i] += w[i][p];
 				idx++;
 			}
 		}
+
+		std::cout << "Max wij:" << maxw << std::endl;
+		std::cout << "Min wij:" << minw << std::endl;
 
 		for (GLuint i = 1; i <= numvertices; ++i) {
 			eij[i].resize(3, neighbors[i].size());
@@ -615,13 +631,10 @@ int main(int argc, char *argv[])
 	}
 
 	// eij
-	if (1) {
-		compute_edge(eij, numvertices);
-	}
+	compute_edge(eij, numvertices);
 
+	// start
 	print_mode();
-	
-	p_to_idx.resize(numvertices + 1);
 	std::thread update_thread(iterate_deform);
 	glutMainLoop();
 	
