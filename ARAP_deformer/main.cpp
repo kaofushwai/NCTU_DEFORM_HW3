@@ -343,8 +343,9 @@ void keyboard(unsigned char key, int x, int y )
 		print_mode();
 		break;
 	case 'c':
-		compute_Ri();
+		
 		compute_p_prime();
+		compute_Ri();
 		break;
 	default:
 		break;
@@ -447,7 +448,7 @@ void compute_cot_weighting(GLfloat *vertices, GLuint a, GLuint b, GLuint c) {
 	GLfloat cos = va.dot(vb);
 	GLfloat cot = 0.5*(cos / sqrt(1.0 - cos*cos));
 
-	bool uniform_weighting = true;
+	bool uniform_weighting = false;
 	if (uniform_weighting) {
 		cot = 0.5;
 	}
@@ -507,7 +508,7 @@ int main(int argc, char *argv[])
 
 	// load 3D model
 	std::cout << "loading model" << std::endl;
-	switch (7) {
+	switch (5) {
 	case 0:
 		mesh = glmReadOBJ("../data/Armadillo_o.obj");
 		break;
@@ -546,6 +547,7 @@ int main(int argc, char *argv[])
 		}
 
 	}
+	glmUnitize(mesh);
 	glmFacetNormals(mesh);
 	glmVertexNormals(mesh, 90.0);
 	std::cout << "numvertices: " << mesh->numvertices << std::endl;
