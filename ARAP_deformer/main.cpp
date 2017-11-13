@@ -357,7 +357,7 @@ void keyboard(unsigned char key, int x, int y )
 void timf(int value)
 {
 	glutPostRedisplay();
-	glutTimerFunc(80, timf, 0);
+	glutTimerFunc(1, timf, 0);
 
 }
 
