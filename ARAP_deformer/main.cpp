@@ -292,7 +292,9 @@ void keyboard(unsigned char key, int x, int y )
 		std::cout << "show handles: " << show_handles << std::endl;
 		break;
 	case 'd':
-		
+		if (current_mode == DEFORM_MODE) {
+			break;
+		}
 		// create solver
 		
 		for (auto handle : handles) {
