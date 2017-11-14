@@ -13,7 +13,8 @@
 	  Tudor Carean - April 2008 - added texture support
 
  */
-
+#ifndef GLM_H
+#define GLM_H
 
 #include <glut.h>
 
@@ -311,3 +312,4 @@ glmReadPPM(char* filename, int* width, int* height);
 
 GLMgroup*
 glmFindGroup(GLMmodel* model, char* name);
+#endif
