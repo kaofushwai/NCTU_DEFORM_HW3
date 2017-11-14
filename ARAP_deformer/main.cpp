@@ -310,6 +310,7 @@ void keyboard(unsigned char key, int x, int y )
 
 void timf(int value)
 {
+	arapsolver->updateMesh();
 	glutPostRedisplay();
 	glutTimerFunc(1, timf, 0);
 

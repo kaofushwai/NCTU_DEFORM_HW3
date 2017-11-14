@@ -48,5 +48,7 @@ public:
 	void updatePPrime();
 	void updateRotation();
 
+	void updateMesh();
+
 	void setConstrain(GLuint idx);
 };
