@@ -44,6 +44,8 @@ ArapSolver *arapsolver;
 int selected_handle_id = -1;
 bool deform_mesh_flag = false;
 
+GLuint iteration = 0;
+GLuint update_times = 0;
 // ----------------------------------------------------------------------------------------------------
 // render related functions
 
@@ -249,6 +251,8 @@ void motion(int x, int y)
 			mesh->vertices[3 * idx + 1] = pt[1];
 			mesh->vertices[3 * idx + 2] = pt[2];
 		}
+		iteration = 0;
+		update_times = 0;
 	}
 
 	last_x = x;
@@ -310,9 +314,12 @@ void keyboard(unsigned char key, int x, int y )
 
 void timf(int value)
 {
+	std::string title = "ARAP iteration: " + std::to_string(iteration) + ", update:" + std::to_string(update_times);
+	glutSetWindowTitle(title.c_str());
 	arapsolver->updateMesh();
 	glutPostRedisplay();
 	glutTimerFunc(1, timf, 0);
+	update_times++;
 
 }
 
@@ -322,6 +329,7 @@ void iterate_deform() {
 			busy = true;
 			arapsolver->updatePPrime();
 			arapsolver->updateRotation();
+			iteration++;
 		}
 		busy = false;
 	}
@@ -386,7 +394,13 @@ int main(int argc, char *argv[])
 
 	// load 3D model
 	std::cout << "loading model" << std::endl;
-	switch (5) {
+	switch (-2) {
+	case -2:
+		mesh = glmReadOBJ("../data/Dino_2k.obj");
+		break;
+	case -1:
+		mesh = glmReadOBJ("../data/man_5k.obj");
+		break;
 	case 0:
 		mesh = glmReadOBJ("../data/Armadillo_o.obj");
 		break;
