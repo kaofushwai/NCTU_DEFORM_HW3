@@ -21,10 +21,10 @@ typedef unsigned int GLuint;
 class ArapSolver {
 private:
 	_GLMmodel *mesh;
-	GLuint num_constrain;
 	bool cot_weighting;
 	bool *is_constrain;
 
+	std::vector<GLuint> constrain_idx;
 	std::vector<GLuint> non_constrain_idx; // contains p's index which are not constrain
 	std::vector<GLuint> p_to_idx; // map from p's index to L's index
 	std::vector<GLuint> *neighbors;

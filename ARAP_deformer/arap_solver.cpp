@@ -1,8 +1,7 @@
 #include "arap_solver.h"
 
 ArapSolver::ArapSolver(_GLMmodel *_mesh, bool _cot_weighting = false) : 
-	mesh(_mesh), 
-	num_constrain(0),
+	mesh(_mesh),
 	cot_weighting(_cot_weighting) {
 	// allocate memory
 	this->p_to_idx.resize(this->mesh->numvertices + 1);
@@ -57,14 +56,6 @@ ArapSolver::ArapSolver(_GLMmodel *_mesh, bool _cot_weighting = false) :
 		this->compute_weighting(this->mesh->triangles[t].vindices[1], this->mesh->triangles[t].vindices[2], this->mesh->triangles[t].vindices[0]);
 		this->compute_weighting(this->mesh->triangles[t].vindices[2], this->mesh->triangles[t].vindices[0], this->mesh->triangles[t].vindices[1]);
 	}
-
-	for (GLuint i = 1; i <= this->mesh->numvertices; ++i) {
-		for (GLuint j = 0; j < this->neighbors[i].size(); ++j) {
-			if (this->W[i](j, j) != 1) {
-				std::cout << "fuck " << this->W[i](j, j) << std::endl;
-			}
-		}
-	}
 }
 
 ArapSolver::~ArapSolver() {
@@ -79,6 +70,8 @@ void ArapSolver::compute_weighting(GLuint a, GLuint b, GLuint c) {
 	if (this->cot_weighting) {
 		// cotangent weighting
 	}
+	this->w_sum[b] += cot;
+	this->w_sum[c] += cot;
 	for (GLuint j = 0; j < this->neighbors[b].size(); ++j) {
 		if (this->neighbors[b][j] == c) {
 			this->W[b](j, j) += cot;
@@ -94,11 +87,11 @@ void ArapSolver::compute_weighting(GLuint a, GLuint b, GLuint c) {
 
 void ArapSolver::setConstrain(GLuint idx) {
 	this->is_constrain[idx] = true;
-	this->num_constrain++;
+	this->constrain_idx.push_back(idx);
 }
 
 void ArapSolver::init() {
-	GLuint num_tosolve = this->mesh->numvertices - this->num_constrain;
+	GLuint num_tosolve = this->mesh->numvertices - this->constrain_idx.size();
 	// only solve none_constrain p'
 	solver.Create(num_tosolve, num_tosolve, 3);
 
@@ -112,12 +105,12 @@ void ArapSolver::init() {
 
 	for (GLuint i = 0; i < this->non_constrain_idx.size(); ++i) {
 		GLuint curidx = this->non_constrain_idx[i];
-		solver.AddSysElement(i, i, this->neighbors[curidx].size());
+		solver.AddSysElement(i, i, this->w_sum[curidx]);
 
 		for (GLuint j = 0; j < this->neighbors[curidx].size();++j) {
 			GLuint nidx = this->neighbors[curidx][j];
 			if (!this->is_constrain[nidx]) {
-				solver.AddSysElement(i, this->p_to_idx[nidx], -1);
+				solver.AddSysElement(i, this->p_to_idx[nidx], -this->W[curidx](j, j));
 			}
 		}
 	}
@@ -135,14 +128,14 @@ void ArapSolver::updatePPrime() {
 		}
 		for (GLuint j = 0; j < this->neighbors[curidx].size(); ++j) {
 			GLuint nidx = neighbors[curidx][j];
-			Eigen::Vector3f bv = 0.5  * (this->R[curidx] + this->R[nidx]) * this->e[curidx].col(j);
+			Eigen::Vector3f bv = 0.5  * this->W[curidx](j, j) * (this->R[curidx] + this->R[nidx]) * this->e[curidx].col(j);
 			for (GLuint j = 0; j < 3; ++j) {
 				b[j][i] += bv[j];
 			}
 
 			if (this->is_constrain[nidx]) {
-				for (GLuint j = 0; j < 3; ++j) {
-					b[j][i] += this->mesh->vertices[3 * nidx + j];
+				for (GLuint k = 0; k < 3; ++k) {
+					b[k][i] += this->mesh->vertices[3 * nidx + k] * this->W[curidx](j, j);
 				}
 			}
 		}
@@ -160,6 +153,11 @@ void ArapSolver::updatePPrime() {
 			this->mesh->vertices[3 * curidx + j] = solver.GetSolution(j, i);
 		}
 	}
+	for (auto curidx : this->constrain_idx) {
+		for (GLuint j = 0; j < 3; ++j) {
+			this->p_prime[curidx][j] = this->mesh->vertices[3 * curidx + j];
+		}
+	}
 }
 
 void ArapSolver::updateRotation() {
@@ -168,7 +166,7 @@ void ArapSolver::updateRotation() {
 			GLuint nidx = neighbors[i][j];
 			this->e_prime[i].col(j) = p_prime[i] - p_prime[nidx];
 		}
-		Eigen::Matrix3f S = this->e[i] * this->e_prime[i].transpose();
+		Eigen::Matrix3f S = this->e[i] * this->W[i] * this->e_prime[i].transpose();
 		Eigen::JacobiSVD<Eigen::Matrix3f> svd(S, Eigen::ComputeFullU | Eigen::ComputeFullV);
 		Eigen::Matrix3f V = svd.matrixV();
 		Eigen::Matrix3f Ut = svd.matrixU().transpose();
@@ -176,7 +174,7 @@ void ArapSolver::updateRotation() {
 		R[i] = V * Ut;
 		if (R[i].determinant() < 0) {
 			Eigen::Matrix3f flip = Eigen::Matrix3f::Identity();
-			flip(2, 2) = -1;
+			flip(2, 2) = R[i].determinant();
 			R[i] = V * flip * Ut;
 		}
 	}
