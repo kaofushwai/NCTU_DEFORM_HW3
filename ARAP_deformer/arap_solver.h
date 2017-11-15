@@ -21,6 +21,7 @@ typedef unsigned int GLuint;
 class ArapSolver {
 private:
 	_GLMmodel *mesh;
+	
 	bool cot_weighting;
 	bool *is_constrain;
 
@@ -41,6 +42,7 @@ private:
 
 	void compute_weighting(GLuint a, GLuint b, GLuint c);
 public:
+	bool modified;
 	ArapSolver(_GLMmodel *_mesh, bool _cot_weighting);
 	~ArapSolver();
 	void init();

@@ -4,6 +4,7 @@ ArapSolver::ArapSolver(_GLMmodel *_mesh, bool _cot_weighting) :
 	mesh(_mesh),
 	cot_weighting(_cot_weighting) {
 	// allocate memory
+	this->modified = false;
 	this->p_to_idx.resize(this->mesh->numvertices + 1);
 	this->is_constrain = new bool[mesh->numvertices + 1]();
 	this->neighbors = new std::vector<GLuint>[mesh->numvertices + 1];
@@ -175,6 +176,7 @@ void ArapSolver::updatePPrime() {
 			this->p_prime[curidx][j] = this->mesh->vertices[3 * curidx + j];
 		}
 	}
+	this->modified = true;
 }
 
 void ArapSolver::updateRotation() {

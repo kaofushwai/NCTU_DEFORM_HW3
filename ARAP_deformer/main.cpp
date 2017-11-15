@@ -15,6 +15,7 @@
 #include "mtxlib.h"
 #include "trackball.h"
 #include "LeastSquaresSparseSolver.h"
+#include "TimeRecorder.h"
 
 #include "arap_solver.h"
 
@@ -277,6 +278,7 @@ void print_mode() {
 // keyboard related functions
 void keyboard(unsigned char key, int x, int y )
 {
+	TimeRecorder timer;
 	switch(key)
 	{
 	case 'h':
@@ -287,7 +289,10 @@ void keyboard(unsigned char key, int x, int y )
 		if (current_mode == DEFORM_MODE) {
 			break;
 		}
+		std::cout << "Factorizing ... ";
+		timer.ResetTimer();
 		arapsolver->init();
+		std::cout << "done (takes " << timer.PassedTime() << "sec)" << std::endl;
 		current_mode = DEFORM_MODE;
 		print_mode();
 		break;
@@ -316,10 +321,14 @@ void timf(int value)
 {
 	std::string title = "ARAP iteration: " + std::to_string(iteration) + ", update:" + std::to_string(update_times);
 	glutSetWindowTitle(title.c_str());
-	arapsolver->updateMesh();
+	if (arapsolver->modified) {
+		arapsolver->modified = false;
+		arapsolver->updateMesh();
+		update_times++;
+	}
 	glutPostRedisplay();
 	glutTimerFunc(1, timf, 0);
-	update_times++;
+	
 
 }
 
@@ -394,7 +403,7 @@ int main(int argc, char *argv[])
 
 	// load 3D model
 	std::cout << "loading model" << std::endl;
-	switch (-2) {
+	switch (5) {
 	case -2:
 		mesh = glmReadOBJ("../data/Dino_2k.obj");
 		break;
@@ -436,11 +445,15 @@ int main(int argc, char *argv[])
 	glmFacetNormals(mesh);
 	glmVertexNormals(mesh, 90.0);
 	std::cout << "numvertices: " << mesh->numvertices << std::endl;
+	std::cout << "numtriangles: " << mesh->numtriangles << std::endl;
 
 	// pre compute
+	TimeRecorder timer;
 	std::cout << "initializing arapsolver ... ";
+	timer.ResetTimer();
 	arapsolver = new ArapSolver(mesh, false);
-	std::cout << "done" << std::endl;
+	
+	std::cout << "done (takes " << timer.PassedTime() << "sec)" << std::endl;
 
 	// start
 	print_mode();
