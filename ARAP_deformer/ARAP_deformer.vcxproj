@@ -85,6 +85,7 @@
   <ItemGroup>
     <ClCompile Include="arap_solver.cpp" />
     <ClCompile Include="glm.cpp" />
+    <ClCompile Include="isoline.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="mtxlib.cpp" />
     <ClCompile Include="trackball.cpp" />
@@ -92,6 +93,7 @@
   <ItemGroup>
     <ClInclude Include="arap_solver.h" />
     <ClInclude Include="glm.h" />
+    <ClInclude Include="isoline.h" />
     <ClInclude Include="LeastSquaresSparseSolver.h" />
     <ClInclude Include="mtxlib.h" />
     <ClInclude Include="TimeRecorder.h" />

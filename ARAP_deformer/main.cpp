@@ -18,6 +18,7 @@
 #include "TimeRecorder.h"
 
 #include "arap_solver.h"
+#include "isoline.h"
 
 #include <Eigen/Dense>
 #include <Eigen/Sparse>
@@ -36,11 +37,12 @@ typedef enum { SELECT_MODE, DEFORM_MODE } ControlMode;
 ControlMode current_mode = SELECT_MODE;
 
 vector<float*> colors;
-vector<vector<int> > handles;
+vector<vector<GLuint> > handles;
 
 bool show_handles = true;
 volatile bool busy = false;
 ArapSolver *arapsolver;
+Isoline *isolineSolver;
 
 int selected_handle_id = -1;
 bool deform_mesh_flag = false;
@@ -78,7 +80,40 @@ void Display(void)
 	glEnable(GL_LIGHTING);
 	glColor3f(1.0 , 1.0 , 1.0f);
 	glPolygonMode(GL_FRONT_AND_BACK , GL_FILL);
-	glmDraw(mesh , GLM_SMOOTH);
+	//glmDraw(mesh , GLM_SMOOTH);
+	glBegin(GL_TRIANGLES);
+	for (GLuint i = 0; i < mesh->numtriangles; ++i) {
+		GLMtriangle &T = mesh->triangles[i];
+		for (int j = 0; j < 3; ++j) {
+			GLuint v = T.vindices[j];
+			if (isolineSolver->phis.size() > 0) {
+				GLfloat phi = isolineSolver->phis[0][v];
+				float h = phi * 360.0;
+				float s = 1;
+				float v = 1;
+
+				float r, g, b; // 0.0-1.0
+
+				int   hi = (int)(h / 60.0f) % 6;
+				float f = (h / 60.0f) - hi;
+				float p = v * (1.0f - s);
+				float q = v * (1.0f - s * f);
+				float t = v * (1.0f - s * (1.0f - f));
+
+				switch (hi) {
+					case 0: r = v, g = t, b = p; break;
+					case 1: r = q, g = v, b = p; break;
+					case 2: r = p, g = v, b = t; break;
+					case 3: r = p, g = q, b = v; break;
+					case 4: r = t, g = p, b = v; break;
+					case 5: r = v, g = p, b = q; break;
+				}
+				glColor3f(r, g, b);
+			}
+			glVertex3f(mesh->vertices[3 * v + 0], mesh->vertices[3 * v + 1], mesh->vertices[3 * v + 2]);
+		}
+	}
+	glEnd();
 
 	// render wire model
 	glPolygonOffset(1.0 , 1.0);
@@ -177,7 +212,7 @@ void mouse(int button, int state, int x, int y)
 		}
 		else
 		{
-			vector<int> this_handle;
+			vector<GLuint> this_handle;
 
 			// project all mesh vertices to current viewport
 			for(int vertIter=1; vertIter<=mesh->numvertices; vertIter++)
@@ -305,9 +340,12 @@ void keyboard(unsigned char key, int x, int y )
 		arapsolver->reset();
 		print_mode();
 		break;
+	case 'x':
+		isolineSolver->addHandle(handles[0]);
+		isolineSolver->addHandle(handles[1]);
+		break;
 	case 'c':
-		arapsolver->updatePPrime();
-		arapsolver->updateRotation();
+		isolineSolver->getPhi(0);
 		break;
 	default:
 		break;
@@ -454,6 +492,8 @@ int main(int argc, char *argv[])
 	arapsolver = new ArapSolver(mesh, false);
 	
 	std::cout << "done (takes " << timer.PassedTime() << "sec)" << std::endl;
+
+	isolineSolver = new Isoline(mesh);
 
 	// start
 	print_mode();
